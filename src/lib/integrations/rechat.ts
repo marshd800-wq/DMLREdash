@@ -294,18 +294,26 @@ export async function syncFromRechat(): Promise<{
   const errors: string[] = [];
 
   // 1. Fetch raw objects from Rechat (each isolated — one failure ≠ total fail).
-  //    Deals + listings use the POST replacements for the deprecated GET routes.
-  const [rawContacts, rawListings, rawDeals] = await Promise.all([
+  //    NOTE: we do NOT pull /valerts or /listings/search — those return the
+  //    whole MLS, not Diana's listings. Her listings + properties come from her
+  //    DEALS (each listing-side deal embeds a listing → property). Deals use the
+  //    POST replacement for the deprecated GET /deals route.
+  const [rawContacts, rawDeals] = await Promise.all([
     safeFetch(errors, "contacts", () =>
       rechatFetchAll(config, { method: "GET", path: "/contacts" }, token, brandId),
-    ),
-    safeFetch(errors, "listings", () =>
-      rechatFetchAll(config, { method: "POST", path: "/valerts", body: {} }, token, brandId),
     ),
     safeFetch(errors, "deals", () =>
       rechatFetchAll(config, { method: "POST", path: "/deals/filter", body: {} }, token, brandId),
     ),
   ]);
+
+  // Derive listings/properties from the listing objects embedded in deals.
+  // (A deal references its listing; when the API embeds the full object we map
+  // it — otherwise this yields nothing and stays empty until the deal shape is
+  // finalized. This is the one spot to revisit once the Deal payload is known.)
+  const rawListings: RechatRaw[] = rawDeals
+    .map((d) => d.listing)
+    .filter((l): l is RechatRaw => Boolean(l) && typeof l === "object");
 
   // 2. Upsert contacts + properties (properties come off listings/deals).
   const contactRows = rawContacts.map(mapContact);

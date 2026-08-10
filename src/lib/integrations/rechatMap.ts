@@ -80,21 +80,29 @@ export function mapContact(r: RechatRaw) {
 }
 
 // ── properties ───────────────────────────────────────────────
-export function mapProperty(r: RechatRaw) {
-  const p = r.property ?? r.address ?? r;
-  const addr = p.full_address ?? p.line1 ?? p.street_address ?? p.address ?? "";
+// Confirmed against the Listing docs: a listing carries a nested `property`,
+// which carries a nested `address` (full_address, state_code, postal_code,
+// location_google.coordinates = [lng, lat]). sqft comes from the formatted
+// block (square_feet.value) or is derived from square_meters.
+export function mapProperty(listing: RechatRaw) {
+  const p = listing.property ?? {};
+  const a = p.address ?? {};
+  const coords: number[] = a.location_google?.coordinates ?? a.location?.coordinates ?? [];
+  const sqft =
+    listing.formatted?.square_feet?.value ??
+    (p.square_meters ? Math.round(p.square_meters * 10.7639) : null);
   return {
-    rechat_id: String(r.id ?? p.id),
-    address: addr || "Unknown address",
-    city: p.city ?? null,
-    state: p.state ?? p.state_code ?? null,
-    zip: p.postal_code ?? p.zip ?? null,
-    beds: num(p.bedroom_count ?? p.beds),
-    baths: num(p.bathroom_count ?? p.baths),
-    sqft: num(p.square_meters ?? p.sqft ?? p.square_feet),
-    list_price: num(r.list_price ?? p.list_price ?? p.price),
-    lat: num(p.latitude ?? p.lat),
-    lng: num(p.longitude ?? p.lng),
+    rechat_id: String(listing.property_id ?? p.id),
+    address: a.full_address ?? a.street_address ?? "Unknown address",
+    city: a.city ?? null,
+    state: a.state_code ?? a.state ?? null,
+    zip: a.postal_code ?? null,
+    beds: num(p.bedroom_count),
+    baths: num(p.bathroom_count),
+    sqft: num(sqft),
+    list_price: num(listing.price),
+    lat: num(coords[1]),
+    lng: num(coords[0]),
   };
 }
 
@@ -164,25 +172,30 @@ function firstDealContactId(r: RechatRaw): string | null {
 }
 
 // ── listings ─────────────────────────────────────────────────
-function mapListingStatus(r: RechatRaw): string {
-  const s = String(r.status ?? "").toLowerCase();
+// MLS statuses are capitalized (Active / Pending / Sold / Leased / Expired /
+// Withdrawn). list_date is unix seconds. `dom` (days on market) is present in
+// list responses when available.
+function mapListingStatus(status: unknown): string {
+  const s = String(status ?? "").toLowerCase();
   if (s.includes("pending")) return "pending";
-  if (s.includes("sold") || s.includes("closed")) return "sold";
+  if (s.includes("sold") || s.includes("closed") || s.includes("leased")) return "sold";
   if (s.includes("expired")) return "expired";
   if (s.includes("withdraw")) return "withdrawn";
   return "active";
 }
 
-export function mapListing(r: RechatRaw) {
+export function mapListing(listing: RechatRaw) {
   return {
     row: {
-      rechat_id: String(r.id),
-      list_date: toDate(r.list_date ?? r.created_at) ?? new Date().toISOString().slice(0, 10),
-      status: mapListingStatus(r),
-      last_price_change: toDate(r.price_updated_at ?? r.last_price_change),
-      showings_count: num(r.showings_count) ?? 0,
-      feedback_summary: r.feedback_summary ?? null,
+      rechat_id: String(listing.id),
+      list_date:
+        toDate(listing.list_date ?? listing.created_at) ??
+        new Date().toISOString().slice(0, 10),
+      status: mapListingStatus(listing.status),
+      last_price_change: null, // MLS feed has no explicit price-change date
+      showings_count: 0, // showings come from ShowingTime, not the MLS listing
+      feedback_summary: null,
     },
-    rechatPropertyId: r.property_id ? String(r.property_id) : String(r.id),
+    rechatPropertyId: String(listing.property_id ?? listing.property?.id ?? ""),
   };
 }
