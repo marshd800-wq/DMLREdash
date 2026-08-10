@@ -21,6 +21,7 @@
 
 import { getSupabaseServer } from "@/lib/supabase/server";
 import {
+  mapCalendarEvent,
   mapContact,
   mapDeal,
   mapDealListing,
@@ -242,6 +243,33 @@ async function rechatFetchAll(
   return out;
 }
 
+/**
+ * Fetch the unified /calendar feed for a date window. It is bounded by low/high
+ * (unix seconds) rather than paginated, so this is a single shot — no start/limit
+ * (which /calendar doesn't accept). Returns the {code,data,info} data array.
+ */
+async function rechatFetchCalendar(
+  config: RechatConfig,
+  low: number,
+  high: number,
+  token: string,
+  brandId: string | null,
+): Promise<RechatRaw[]> {
+  const url = `${config.apiBase}/calendar?low=${low}&high=${high}`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+  if (brandId) headers["X-RECHAT-BRAND"] = brandId;
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    throw new Error(`Rechat GET /calendar failed (${res.status}): ${await res.text()}`);
+  }
+  const json = await res.json();
+  return Array.isArray(json) ? json : (json.data ?? []);
+}
+
 /** Fetch that never throws — returns [] and records the error, so one failing
  *  resource (e.g. a filter body Rechat rejects) doesn't abort the whole sync. */
 async function safeFetch(
@@ -278,6 +306,8 @@ export async function syncFromRechat(): Promise<{
   properties: number;
   deals: number;
   listings: number;
+  activities: number;
+  appointments: number;
   errors: string[];
 }> {
   const config = getRechatConfig();
@@ -343,11 +373,48 @@ export async function syncFromRechat(): Promise<{
     await supabase.from("deals").upsert(dealRows, { onConflict: "rechat_id" });
   }
 
+  // 7. Calendar → the touch log + scheduled appointments. One feed (/calendar)
+  //    merges client activities, synced Gmail/Outlook threads, and CRM tasks.
+  //    Window: past 180d (so cadence sees recent touches) → next 90d (upcoming
+  //    appointments). Contacts/deals must already be upserted so FKs resolve.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const DAY_SEC = 86400;
+  const rawCalendar = await safeFetch(errors, "calendar", () =>
+    rechatFetchCalendar(config, nowSec - 180 * DAY_SEC, nowSec + 90 * DAY_SEC, token, brandId),
+  );
+
+  const contactIdMap = await buildIdMap(supabase, "contacts");
+  const dealIdMap = await buildIdMap(supabase, "deals");
+  const activityRows: RechatRaw[] = [];
+  const appointmentRows: RechatRaw[] = [];
+  for (const ev of rawCalendar) {
+    const mapped = mapCalendarEvent(ev);
+    if (mapped.kind === "activity") {
+      // A touch we can't attribute to a known contact can't inform cadence.
+      const contactId = mapped.contactRechatId ? contactIdMap.get(mapped.contactRechatId) : null;
+      if (contactId) activityRows.push({ ...mapped.row, contact_id: contactId });
+    } else if (mapped.kind === "appointment") {
+      appointmentRows.push({
+        ...mapped.row,
+        contact_id: mapped.contactRechatId ? contactIdMap.get(mapped.contactRechatId) ?? null : null,
+        deal_id: mapped.dealRechatId ? dealIdMap.get(mapped.dealRechatId) ?? null : null,
+      });
+    }
+  }
+  if (activityRows.length) {
+    await supabase.from("activities").upsert(activityRows, { onConflict: "rechat_id" });
+  }
+  if (appointmentRows.length) {
+    await supabase.from("appointments").upsert(appointmentRows, { onConflict: "rechat_id" });
+  }
+
   return {
     contacts: contactRows.length,
     properties: propertyRows.length,
     deals: dealRows.length,
     listings: listingRows.length,
+    activities: activityRows.length,
+    appointments: appointmentRows.length,
     errors,
   };
 }
@@ -394,6 +461,40 @@ export async function upsertRechatRecord(resource: string, raw: RechatRaw): Prom
         }],
         { onConflict: "rechat_id" },
       );
+      break;
+    }
+    case "calendar":
+    case "calendar_event":
+    case "activity":
+    case "crm_task": {
+      // Route a single calendar_event through the same mapping as the bulk sync.
+      // Guard on object_type so a non-calendar payload is safely ignored.
+      if (!raw.object_type) break;
+      const mapped = mapCalendarEvent(raw);
+      if (mapped.kind === "activity" && mapped.contactRechatId) {
+        const contactMap = await buildIdMap(supabase, "contacts");
+        const contactId = contactMap.get(mapped.contactRechatId);
+        if (contactId) {
+          await supabase
+            .from("activities")
+            .upsert([{ ...mapped.row, contact_id: contactId }], { onConflict: "rechat_id" });
+        }
+      } else if (mapped.kind === "appointment") {
+        const [contactMap, dealMap] = await Promise.all([
+          buildIdMap(supabase, "contacts"),
+          buildIdMap(supabase, "deals"),
+        ]);
+        await supabase.from("appointments").upsert(
+          [
+            {
+              ...mapped.row,
+              contact_id: mapped.contactRechatId ? contactMap.get(mapped.contactRechatId) ?? null : null,
+              deal_id: mapped.dealRechatId ? dealMap.get(mapped.dealRechatId) ?? null : null,
+            },
+          ],
+          { onConflict: "rechat_id" },
+        );
+      }
       break;
     }
     default:

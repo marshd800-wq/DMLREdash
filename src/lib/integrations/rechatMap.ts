@@ -159,6 +159,109 @@ export function mapContact(r: RechatRaw) {
   };
 }
 
+// ── calendar events (the unified timeline: touches, emails, CRM tasks) ──
+// Rechat's /calendar feed merges many sources under one calendar_event shape,
+// tagged by `object_type`. We fan the ones Diana's OS needs into two tables:
+//   • activity / email_thread → `activities` (the touch log that feeds Band 2
+//     cadence — "last touch 34d ago"; email_thread carries synced Gmail/Outlook)
+//   • crm_task               → `appointments` (scheduled, real-world commitments)
+// We deliberately skip the rest: deal_context deadlines already come from the
+// deal itself (mapDeal), contact_attribute birthdays/anniversaries are computed
+// by the cadence engine (and their raw `timestamp` is the ORIGINAL date — a
+// wedding anniversary is stamped in the year it happened — so it must never be
+// read as an event time), and email_campaign/holiday aren't actionable here.
+
+/** Single associated contact for an event (`contact` id, else a lone person). */
+function eventContactRechatId(ev: RechatRaw): string | null {
+  if (ev.contact) return String(ev.contact);
+  const people = Array.isArray(ev.people) ? ev.people : [];
+  if (people.length === 1 && people[0]?.id) return String(people[0].id);
+  return null;
+}
+
+/** Rechat activity/email event_type → our activity_type enum. */
+function mapActivityType(eventType: string, objectType: string): string {
+  const t = eventType.toLowerCase();
+  if (objectType === "email_thread" || t === "gmail" || t === "outlook" || t.includes("email"))
+    return "email";
+  if (t.includes("call")) return "call";
+  if (t.includes("text") || t.includes("sms") || t.includes("message")) return "text";
+  if (t.includes("meet") || t.includes("tour") || t.includes("show") || t.includes("appointment"))
+    return "meeting";
+  return "note";
+}
+
+/** Rechat crm_task event_type → our appointment_type enum. */
+function mapAppointmentType(eventType: string): string {
+  const t = eventType.toLowerCase();
+  if (t.includes("closing")) return "closing";
+  if (t.includes("listing")) return "listing";
+  if (t.includes("tour") || t.includes("open house") || t.includes("show") || t.includes("inspection"))
+    return "showing";
+  return "consult"; // Call / Message / Todo / Follow up — a scheduled interaction
+}
+
+export type CalendarMapped =
+  | {
+      kind: "activity";
+      contactRechatId: string | null;
+      row: {
+        rechat_id: string;
+        type: string;
+        occurred_at: string;
+        channel: string | null;
+        notes: string | null;
+      };
+    }
+  | {
+      kind: "appointment";
+      contactRechatId: string | null;
+      dealRechatId: string | null;
+      row: { rechat_id: string; type: string; starts_at: string; source: string; status: string };
+    }
+  | { kind: "skip" };
+
+export function mapCalendarEvent(ev: RechatRaw): CalendarMapped {
+  const objectType = String(ev.object_type ?? "");
+  const eventType = String(ev.event_type ?? "");
+  const id = String(ev.id ?? "");
+
+  if (objectType === "activity" || objectType === "email_thread") {
+    const occurred = toIso(ev.timestamp);
+    if (!occurred || !id) return { kind: "skip" };
+    return {
+      kind: "activity",
+      contactRechatId: eventContactRechatId(ev),
+      row: {
+        rechat_id: `cal:${id}`,
+        type: mapActivityType(eventType, objectType),
+        occurred_at: occurred,
+        channel: objectType === "email_thread" ? eventType || "email" : eventType || null,
+        notes: ev.title ?? null,
+      },
+    };
+  }
+
+  if (objectType === "crm_task") {
+    const startsAt = toIso(ev.timestamp);
+    if (!startsAt || !id) return { kind: "skip" };
+    return {
+      kind: "appointment",
+      contactRechatId: eventContactRechatId(ev),
+      dealRechatId: ev.deal ? String(ev.deal) : null,
+      row: {
+        rechat_id: `cal:${id}`,
+        type: mapAppointmentType(eventType),
+        starts_at: startsAt,
+        source: "rechat",
+        status: "confirmed",
+      },
+    };
+  }
+
+  return { kind: "skip" };
+}
+
 // ── deal helpers ─────────────────────────────────────────────
 const CLIENT_ROLES = ["buyer", "seller", "tenant", "landlord"];
 
