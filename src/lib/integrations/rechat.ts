@@ -23,8 +23,8 @@ import { getSupabaseServer } from "@/lib/supabase/server";
 import {
   mapContact,
   mapDeal,
-  mapListing,
-  mapProperty,
+  mapDealListing,
+  mapDealProperty,
   type RechatRaw,
 } from "@/lib/integrations/rechatMap";
 
@@ -307,44 +307,37 @@ export async function syncFromRechat(): Promise<{
     ),
   ]);
 
-  // Derive listings/properties from the listing objects embedded in deals.
-  // (A deal references its listing; when the API embeds the full object we map
-  // it — otherwise this yields nothing and stays empty until the deal shape is
-  // finalized. This is the one spot to revisit once the Deal payload is known.)
-  const rawListings: RechatRaw[] = rawDeals
-    .map((d) => d.listing)
-    .filter((l): l is RechatRaw => Boolean(l) && typeof l === "object");
-
-  // 2. Upsert contacts + properties (properties come off listings/deals).
+  // 2. Upsert contacts.
   const contactRows = rawContacts.map(mapContact);
   if (contactRows.length) {
     await supabase.from("contacts").upsert(contactRows, { onConflict: "rechat_id" });
   }
 
-  const listingMapped = rawListings.map(mapListing);
-  const propertyRows = rawListings.map(mapProperty);
+  // 3. Properties come from each deal's context (the deal IS the source of Diana's
+  //    pipeline; `deal.listing` is only an id). One property per deal.
+  const propertyRows = rawDeals.map(mapDealProperty);
   if (propertyRows.length) {
     await supabase.from("properties").upsert(propertyRows, { onConflict: "rechat_id" });
   }
 
-  // 3. Resolve FKs.
+  // 4. Resolve FKs (property_id by rechat_id; contact_id by email).
   const propMap = await buildIdMap(supabase, "properties");
-  const contactMap = await buildIdMap(supabase, "contacts");
+  const contactEmailMap = await buildContactEmailMap(supabase);
 
-  // 4. Upsert listings (need property_id).
-  const listingRows = listingMapped.map((l) => ({
-    ...l.row,
-    property_id: l.rechatPropertyId ? propMap.get(l.rechatPropertyId) ?? null : null,
-  }));
+  // 5. Listings for listing-side deals (drive "listings taken" / stale listings).
+  const listingRows = rawDeals
+    .filter((d) => String(d.deal_type ?? "").toLowerCase().startsWith("sell"))
+    .map(mapDealListing)
+    .map((l) => ({ ...l.row, property_id: propMap.get(l.propertyRechatId) ?? null }));
   if (listingRows.length) {
     await supabase.from("listings").upsert(listingRows, { onConflict: "rechat_id" });
   }
 
-  // 5. Upsert deals (need property_id + contact_id).
+  // 6. Deals.
   const dealRows = rawDeals.map(mapDeal).map((d) => ({
     ...d.row,
-    property_id: d.rechatPropertyId ? propMap.get(d.rechatPropertyId) ?? null : null,
-    contact_id: d.rechatContactId ? contactMap.get(d.rechatContactId) ?? null : null,
+    property_id: propMap.get(d.propertyRechatId) ?? null,
+    contact_id: d.clientEmail ? contactEmailMap.get(d.clientEmail.toLowerCase()) ?? null : null,
   }));
   if (dealRows.length) {
     await supabase.from("deals").upsert(dealRows, { onConflict: "rechat_id" });
@@ -359,6 +352,16 @@ export async function syncFromRechat(): Promise<{
   };
 }
 
+/** email (lowercased) → local contact id, for linking deals to contacts. */
+async function buildContactEmailMap(supabase: Supa): Promise<Map<string, string>> {
+  const { data } = await supabase.from("contacts").select("id, email");
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (row.email) map.set(String(row.email).toLowerCase(), String(row.id));
+  }
+  return map;
+}
+
 /** Upsert a single record from a webhook payload by resource type. */
 export async function upsertRechatRecord(resource: string, raw: RechatRaw): Promise<void> {
   const supabase = getSupabaseServer();
@@ -368,25 +371,26 @@ export async function upsertRechatRecord(resource: string, raw: RechatRaw): Prom
     case "contact":
       await supabase.from("contacts").upsert([mapContact(raw)], { onConflict: "rechat_id" });
       break;
-    case "listing": {
-      await supabase.from("properties").upsert([mapProperty(raw)], { onConflict: "rechat_id" });
-      const propMap = await buildIdMap(supabase, "properties");
-      const l = mapListing(raw);
-      await supabase.from("listings").upsert(
-        [{ ...l.row, property_id: l.rechatPropertyId ? propMap.get(l.rechatPropertyId) ?? null : null }],
-        { onConflict: "rechat_id" },
-      );
-      break;
-    }
     case "deal": {
+      // Property from the deal's context, then the deal itself.
+      await supabase.from("properties").upsert([mapDealProperty(raw)], { onConflict: "rechat_id" });
       const propMap = await buildIdMap(supabase, "properties");
-      const contactMap = await buildIdMap(supabase, "contacts");
+      const contactEmailMap = await buildContactEmailMap(supabase);
+
+      if (String(raw.deal_type ?? "").toLowerCase().startsWith("sell")) {
+        const l = mapDealListing(raw);
+        await supabase.from("listings").upsert(
+          [{ ...l.row, property_id: propMap.get(l.propertyRechatId) ?? null }],
+          { onConflict: "rechat_id" },
+        );
+      }
+
       const d = mapDeal(raw);
       await supabase.from("deals").upsert(
         [{
           ...d.row,
-          property_id: d.rechatPropertyId ? propMap.get(d.rechatPropertyId) ?? null : null,
-          contact_id: d.rechatContactId ? contactMap.get(d.rechatContactId) ?? null : null,
+          property_id: propMap.get(d.propertyRechatId) ?? null,
+          contact_id: d.clientEmail ? contactEmailMap.get(d.clientEmail.toLowerCase()) ?? null : null,
         }],
         { onConflict: "rechat_id" },
       );

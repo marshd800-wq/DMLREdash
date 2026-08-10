@@ -1,24 +1,71 @@
 /**
  * ─────────────────────────────────────────────────────────────
- *  RECHAT → SUPABASE MAPPING  (the ONE file to adjust for real payloads)
+ *  RECHAT → SUPABASE MAPPING  (finalized against the real API docs)
  * ─────────────────────────────────────────────────────────────
  *
- * These functions translate Rechat API objects into Diana's OS Supabase rows.
- * Field names here are a BEST-EFFORT against Rechat's documented patterns and
- * MUST be verified against a real API response once credentials exist — Rechat
- * returns rich objects and the exact keys (esp. for deals/contexts) vary.
+ * Translates Rechat API objects into Diana's OS Supabase rows. The Deal shape
+ * is confirmed: a deal stores its data in `deal.context` — a key → {text, number,
+ * date} bag. MLS-sourced values (address, list_price, listing_status, list_date)
+ * are standard keys; contract/closing/financing/appraisal dates are BRAND-
+ * CONFIGURABLE context keys, so we read them with fallback key names.
  *
- * Everything else in the sync engine (auth, fetch, dedupe-upsert, FK resolution,
- * webhooks, cron) is payload-agnostic and does NOT need to change — only this
- * file does. Each mapper uses defensive fallbacks so a missing field degrades to
- * null instead of throwing.
+ * Everything else (auth, fetch, dedupe-upsert, webhooks, cron) is payload-
+ * agnostic. Contact field names remain best-effort until the /contacts payload
+ * is confirmed; deal↔contact is linked by email.
  */
 
 // Rechat payloads are dynamic JSON; `any` is intentional in this mapping layer.
 // eslint-disable-next-line
 export type RechatRaw = Record<string, any>;
 
-// ── helpers ──────────────────────────────────────────────────
+// ── primitives ───────────────────────────────────────────────
+function num(v: unknown): number | null {
+  const n = typeof v === "string" ? Number(v) : (v as number);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Rechat dates are unix seconds; normalize to an ISO date (YYYY-MM-DD). */
+function toDate(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "number") {
+    const ms = v < 1e12 ? v * 1000 : v; // seconds vs ms
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+  const d = new Date(v as string);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+// ── deal_context accessors ───────────────────────────────────
+function ctxText(deal: RechatRaw, key: string): string | null {
+  const v = deal.context?.[key] ?? deal.deal_context?.[key];
+  return v && typeof v.text === "string" && v.text !== "" ? v.text : null;
+}
+function ctxNum(deal: RechatRaw, key: string): number | null {
+  const v = deal.context?.[key] ?? deal.deal_context?.[key];
+  return v && typeof v.number === "number" ? v.number : null;
+}
+function ctxDate(deal: RechatRaw, key: string): string | null {
+  const v = deal.context?.[key] ?? deal.deal_context?.[key];
+  return v?.date != null ? toDate(v.date) : null;
+}
+function firstCtxDate(deal: RechatRaw, keys: string[]): string | null {
+  for (const k of keys) {
+    const d = ctxDate(deal, k);
+    if (d) return d;
+  }
+  return null;
+}
+
+// Brand-configurable date context keys — fallback name lists (NTREIS-ish + generic).
+const CONTRACT_KEYS = ["contract_date", "executed_date", "binding_date", "contract_executed_date"];
+const DD_KEYS = ["option_period_end_date", "option_ends", "inspection_object_date", "due_diligence_end", "option_period"];
+const FINANCING_KEYS = ["financing_contingency_date", "third_party_financing_date", "financing_date", "loan_approval_date"];
+const APPRAISAL_KEYS = ["appraisal_contingency_date", "appraisal_date", "appraisal_object_date"];
+const CLOSING_KEYS = ["closing_date", "close_date", "closing"];
+
+// ── contacts (best-effort until /contacts payload is confirmed) ──
 function firstEmail(r: RechatRaw): string | null {
   if (typeof r.email === "string") return r.email;
   if (Array.isArray(r.emails) && r.emails.length) {
@@ -27,7 +74,6 @@ function firstEmail(r: RechatRaw): string | null {
   }
   return null;
 }
-
 function firstPhone(r: RechatRaw): string | null {
   if (typeof r.phone_number === "string") return r.phone_number;
   if (typeof r.phone === "string") return r.phone;
@@ -37,24 +83,6 @@ function firstPhone(r: RechatRaw): string | null {
   }
   return null;
 }
-
-function num(v: any): number | null {
-  const n = typeof v === "string" ? Number(v) : v;
-  return Number.isFinite(n) ? n : null;
-}
-
-/** Rechat timestamps are often unix seconds; normalize to an ISO date (YYYY-MM-DD). */
-function toDate(v: any): string | null {
-  if (v == null) return null;
-  if (typeof v === "number") {
-    const ms = v < 1e12 ? v * 1000 : v; // seconds vs ms
-    return new Date(ms).toISOString().slice(0, 10);
-  }
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-}
-
-// ── contacts ─────────────────────────────────────────────────
 function mapContactType(r: RechatRaw): string {
   const t = String(r.contact_type ?? r.type ?? "").toLowerCase();
   if (t.includes("past")) return "past_client";
@@ -64,9 +92,8 @@ function mapContactType(r: RechatRaw): string {
   if (t.includes("vendor")) return "vendor";
   return "lead";
 }
-
 export function mapContact(r: RechatRaw) {
-  const attrs = r.summary ?? r; // Rechat often nests display fields under `summary`
+  const attrs = r.summary ?? r;
   return {
     rechat_id: String(r.id),
     first_name: attrs.first_name ?? attrs.given_name ?? "",
@@ -79,102 +106,30 @@ export function mapContact(r: RechatRaw) {
   };
 }
 
-// ── properties ───────────────────────────────────────────────
-// Confirmed against the Listing docs: a listing carries a nested `property`,
-// which carries a nested `address` (full_address, state_code, postal_code,
-// location_google.coordinates = [lng, lat]). sqft comes from the formatted
-// block (square_feet.value) or is derived from square_meters.
-export function mapProperty(listing: RechatRaw) {
-  const p = listing.property ?? {};
-  const a = p.address ?? {};
-  const coords: number[] = a.location_google?.coordinates ?? a.location?.coordinates ?? [];
-  const sqft =
-    listing.formatted?.square_feet?.value ??
-    (p.square_meters ? Math.round(p.square_meters * 10.7639) : null);
-  return {
-    rechat_id: String(listing.property_id ?? p.id),
-    address: a.full_address ?? a.street_address ?? "Unknown address",
-    city: a.city ?? null,
-    state: a.state_code ?? a.state ?? null,
-    zip: a.postal_code ?? null,
-    beds: num(p.bedroom_count),
-    baths: num(p.bathroom_count),
-    sqft: num(sqft),
-    list_price: num(listing.price),
-    lat: num(coords[1]),
-    lng: num(coords[0]),
-  };
+// ── deal helpers ─────────────────────────────────────────────
+const CLIENT_ROLES = ["buyer", "seller", "tenant", "landlord"];
+
+function clientRole(deal: RechatRaw): RechatRaw | null {
+  const roles = Array.isArray(deal.roles) ? deal.roles : [];
+  return roles.find((r: RechatRaw) => CLIENT_ROLES.includes(String(r.role ?? "").toLowerCase())) ?? null;
 }
 
-// ── deals ────────────────────────────────────────────────────
-/** Rechat deals expose values via a context bag; pull a named context date. */
-function ctxDate(r: RechatRaw, key: string): string | null {
-  const ctx = r.contexts ?? r.deal_context ?? {};
-  const v = ctx?.[key]?.date ?? ctx?.[key]?.value ?? ctx?.[key] ?? r[key];
-  return toDate(v);
-}
-function ctxNum(r: RechatRaw, key: string): number | null {
-  const ctx = r.contexts ?? r.deal_context ?? {};
-  return num(ctx?.[key]?.number ?? ctx?.[key]?.value ?? ctx?.[key] ?? r[key]);
+/** Diana's side commission as a rate (0.03). Selling deal → SellerAgent role. */
+function agentCommissionRate(deal: RechatRaw, isListing: boolean): number | null {
+  const roles = Array.isArray(deal.roles) ? deal.roles : [];
+  const want = isListing ? "selleragent" : "buyeragent";
+  const role = roles.find((r: RechatRaw) => String(r.role ?? "").toLowerCase() === want);
+  const pct = role?.commission_percentage;
+  return typeof pct === "number" && pct > 0 ? pct / 100 : null;
 }
 
-function mapDealStatus(r: RechatRaw, isClosed: boolean): string {
-  if (isClosed) return "sold";
-  const s = String(r.status ?? r.stage ?? "").toLowerCase();
-  if (s.includes("clear")) return "clear_to_close";
-  if (s.includes("financ")) return "financing";
-  if (s.includes("apprais")) return "appraisal";
-  if (s.includes("inspect")) return "inspection";
-  if (s.includes("clos")) return "closing";
-  return "under_contract";
+/** Property/listing key — the deal's listing id when set, else a per-deal id. */
+const propRechatId = (deal: RechatRaw): string => String(deal.listing ?? `deal:${deal.id}`);
+
+function isListingSide(deal: RechatRaw): boolean {
+  return String(deal.deal_type ?? "").toLowerCase().startsWith("sell");
 }
 
-export function mapDeal(r: RechatRaw) {
-  const isListing =
-    String(r.deal_type ?? r.side ?? "").toLowerCase().includes("selling") ||
-    String(r.deal_type ?? r.side ?? "").toLowerCase().includes("listing");
-  const closingDate = ctxDate(r, "closing_date");
-  const isClosed = Boolean(r.is_closed ?? r.closed ?? false);
-  const price =
-    ctxNum(r, "sales_price") ?? ctxNum(r, "list_price") ?? num(r.price) ?? 0;
-
-  return {
-    row: {
-      rechat_id: String(r.id),
-      side: isListing ? "listing" : "buyer",
-      status: mapDealStatus(r, isClosed),
-      price: price ?? 0,
-      commission_rate: num(r.commission_rate) ?? 0.03,
-      binding_date: ctxDate(r, "contract_date") ?? ctxDate(r, "binding_date"),
-      dd_end: ctxDate(r, "inspection_period_end") ?? ctxDate(r, "due_diligence_end"),
-      financing_end: ctxDate(r, "financing_contingency_date") ?? ctxDate(r, "financing_end"),
-      appraisal_end: ctxDate(r, "appraisal_contingency_date") ?? ctxDate(r, "appraisal_end"),
-      closing_date: closingDate,
-      is_closed: isClosed,
-    },
-    // Rechat foreign keys — resolved to local uuids during sync.
-    rechatPropertyId: r.listing ? String(r.listing) : (r.property_id ? String(r.property_id) : null),
-    rechatContactId: firstDealContactId(r),
-  };
-}
-
-function firstDealContactId(r: RechatRaw): string | null {
-  const roles = r.roles ?? r.deal_roles ?? [];
-  if (Array.isArray(roles) && roles.length) {
-    const client = roles.find((x: any) =>
-      String(x.role ?? "").toLowerCase().includes("buyer") ||
-      String(x.role ?? "").toLowerCase().includes("seller"),
-    ) ?? roles[0];
-    const c = client?.contact ?? client?.contact_id ?? client?.id;
-    return c ? String(c) : null;
-  }
-  return r.contact_id ? String(r.contact_id) : null;
-}
-
-// ── listings ─────────────────────────────────────────────────
-// MLS statuses are capitalized (Active / Pending / Sold / Leased / Expired /
-// Withdrawn). list_date is unix seconds. `dom` (days on market) is present in
-// list responses when available.
 function mapListingStatus(status: unknown): string {
   const s = String(status ?? "").toLowerCase();
   if (s.includes("pending")) return "pending";
@@ -184,18 +139,62 @@ function mapListingStatus(status: unknown): string {
   return "active";
 }
 
-export function mapListing(listing: RechatRaw) {
+// ── property (built from the deal's context) ─────────────────
+export function mapDealProperty(deal: RechatRaw) {
+  return {
+    rechat_id: propRechatId(deal),
+    address: ctxText(deal, "full_address") ?? ctxText(deal, "street_address") ?? deal.title ?? "Unknown address",
+    city: ctxText(deal, "city"),
+    state: ctxText(deal, "state_code") ?? ctxText(deal, "state"),
+    zip: ctxText(deal, "postal_code"),
+    beds: ctxNum(deal, "bedroom_count"),
+    baths: ctxNum(deal, "bathroom_count"),
+    sqft: ctxNum(deal, "square_feet"),
+    list_price: ctxNum(deal, "list_price"),
+    lat: null,
+    lng: null,
+  };
+}
+
+// ── listing (for listing-side deals; drives "listings taken"/stale) ──
+export function mapDealListing(deal: RechatRaw) {
   return {
     row: {
-      rechat_id: String(listing.id),
-      list_date:
-        toDate(listing.list_date ?? listing.created_at) ??
-        new Date().toISOString().slice(0, 10),
-      status: mapListingStatus(listing.status),
-      last_price_change: null, // MLS feed has no explicit price-change date
-      showings_count: 0, // showings come from ShowingTime, not the MLS listing
+      rechat_id: `listing:${propRechatId(deal)}`,
+      list_date: ctxDate(deal, "list_date") ?? today(),
+      status: mapListingStatus(ctxText(deal, "listing_status")),
+      last_price_change: null,
+      showings_count: 0,
       feedback_summary: null,
     },
-    rechatPropertyId: String(listing.property_id ?? listing.property?.id ?? ""),
+    propertyRechatId: propRechatId(deal),
+  };
+}
+
+// ── deal ─────────────────────────────────────────────────────
+export function mapDeal(deal: RechatRaw) {
+  const isListing = isListingSide(deal);
+  const status = String(ctxText(deal, "listing_status") ?? "").toLowerCase();
+  const isClosed = ["sold", "closed", "leased"].some((s) => status.includes(s));
+  const price = ctxNum(deal, "sales_price") ?? ctxNum(deal, "list_price") ?? 0;
+  const client = clientRole(deal);
+
+  return {
+    row: {
+      rechat_id: String(deal.id),
+      side: isListing ? "listing" : "buyer",
+      status: isClosed ? "sold" : "under_contract",
+      price: price ?? 0,
+      commission_rate: agentCommissionRate(deal, isListing) ?? 0.03,
+      binding_date: firstCtxDate(deal, CONTRACT_KEYS),
+      dd_end: firstCtxDate(deal, DD_KEYS),
+      financing_end: firstCtxDate(deal, FINANCING_KEYS),
+      appraisal_end: firstCtxDate(deal, APPRAISAL_KEYS),
+      closing_date: firstCtxDate(deal, CLOSING_KEYS),
+      is_closed: isClosed,
+    },
+    propertyRechatId: propRechatId(deal),
+    isListing,
+    clientEmail: client?.email ?? null,
   };
 }
