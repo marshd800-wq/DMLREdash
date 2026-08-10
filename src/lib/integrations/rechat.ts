@@ -21,6 +21,7 @@
 
 import { getSupabaseServer } from "@/lib/supabase/server";
 import {
+  buildListCadenceMap,
   mapCalendarEvent,
   mapContact,
   mapDeal,
@@ -328,12 +329,16 @@ export async function syncFromRechat(): Promise<{
   //    whole MLS, not Diana's listings. Her listings + properties come from her
   //    DEALS (each listing-side deal embeds a listing → property). Deals use the
   //    POST replacement for the deprecated GET /deals route.
-  const [rawContacts, rawDealsAll] = await Promise.all([
+  const [rawContacts, rawDealsAll, rawLists] = await Promise.all([
     safeFetch(errors, "contacts", () =>
       rechatFetchAll(config, { method: "GET", path: "/contacts" }, token, brandId),
     ),
     safeFetch(errors, "deals", () =>
       rechatFetchAll(config, { method: "POST", path: "/deals/filter", body: {} }, token, brandId),
+    ),
+    // Contact Lists define Diana's real touch cadence per tag ("Warm"=60d …).
+    safeFetch(errors, "contact_lists", () =>
+      rechatFetchAll(config, { method: "GET", path: "/contacts/lists" }, token, brandId),
     ),
   ]);
 
@@ -341,8 +346,20 @@ export async function syncFromRechat(): Promise<{
   // that would otherwise inflate pipeline/GCI. Only real deals count.
   const rawDeals = rawDealsAll.filter((d) => d.is_draft !== true);
 
-  // 2. Upsert contacts.
-  const contactRows = rawContacts.map(mapContact);
+  // 2. Upsert contacts. Fill a missing per-contact touch_freq from the Contact
+  //    List whose tag the contact carries, so cadence follows Diana's real config.
+  const listCadence = buildListCadenceMap(rawLists);
+  const contactRows = rawContacts.map(mapContact).map((row) => {
+    if (row.touch_freq == null && row.tags.length) {
+      let freq: number | null = null;
+      for (const t of row.tags) {
+        const v = listCadence.get(t.toLowerCase());
+        if (v != null && (freq == null || v < freq)) freq = v;
+      }
+      if (freq != null) row.touch_freq = freq;
+    }
+    return row;
+  });
   if (contactRows.length) {
     await supabase.from("contacts").upsert(contactRows, { onConflict: "rechat_id" });
   }

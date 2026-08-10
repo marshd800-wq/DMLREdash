@@ -49,6 +49,13 @@ export function Band2({ data }: { data: Band2Data }) {
           showReason={false}
         />
         <Panel
+          title="Birthdays"
+          tone="accent"
+          items={data.birthdays}
+          empty="No birthdays in the next two weeks."
+          showReason={false}
+        />
+        <Panel
           title="Reviews I owe"
           tone="accent"
           items={data.reviewsOwed}

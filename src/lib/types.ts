@@ -27,6 +27,8 @@ export interface Contact {
   source: string | null;
   last_touch_at: string | null; // computed from activities
   next_touch_due: string | null; // computed by cadence rules
+  touch_freq?: number | null; // Diana's real touch cadence (days), from Rechat/lists
+  birthday?: string | null; // YYYY-MM-DD, drives the birthday outreach trigger
   referral_source_id: string | null;
   review_asked_at: string | null;
   referral_asked_at: string | null;
@@ -193,6 +195,7 @@ export type OutreachReason =
   | "cold_lead"
   | "past_client_due"
   | "home_anniversary"
+  | "birthday"
   | "review_owed"
   | "referral_owed";
 
@@ -208,6 +211,7 @@ export interface OutreachItem {
 export interface Band2Data {
   coldLeads: OutreachItem[];
   pastClientsDue: OutreachItem[];
+  birthdays: OutreachItem[];
   reviewsOwed: OutreachItem[];
   referralsOwed: OutreachItem[];
   callTheseTen: OutreachItem[];

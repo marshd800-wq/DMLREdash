@@ -135,6 +135,8 @@ export const sampleContacts: Contact[] = [
     source: "referral",
     last_touch_at: iso(-4),
     next_touch_due: dateOnly(1),
+    touch_freq: 14,
+    birthday: dateOnly(3),
     referral_source_id: null,
     review_asked_at: null,
     referral_asked_at: null,

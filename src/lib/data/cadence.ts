@@ -20,8 +20,10 @@ import type {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Touch cadence in days, by contact type + heat. Editable defaults. */
+/** Touch cadence in days. Diana's real per-contact cadence (from Rechat or her
+ *  Contact Lists) wins; otherwise fall back to type + heat defaults. */
 function cadenceDays(contact: Contact): number {
+  if (contact.touch_freq && contact.touch_freq > 0) return contact.touch_freq;
   switch (contact.type) {
     case "lead":
       if (contact.heat === "cold") return 21;
@@ -72,6 +74,8 @@ const SCRIPTS: Record<OutreachReason, string> = {
     "Hi {first}! It's been a minute — how's the house treating you? Would love to catch up.",
   home_anniversary:
     "Happy home anniversary, {first}! Hard to believe it's been a year. Here's what your neighborhood's doing right now.",
+  birthday:
+    "Happy birthday, {first}! 🎉 Hope you're celebrating in style — thinking of you today.",
   review_owed:
     "{first}, it was a joy working with you! Would you mind leaving a quick review? Here's the link — takes 60 seconds.",
   referral_owed:
@@ -82,6 +86,7 @@ const REASON_LABELS: Record<OutreachReason, string> = {
   cold_lead: "Lead going cold",
   past_client_due: "Past client due",
   home_anniversary: "1-year home anniversary",
+  birthday: "Birthday coming up",
   review_owed: "Review owed",
   referral_owed: "Referral ask owed",
 };
@@ -118,6 +123,7 @@ export function computeBand2(
 ): Band2Data {
   const coldLeads: OutreachItem[] = [];
   const pastClientsDue: OutreachItem[] = [];
+  const birthdays: OutreachItem[] = [];
   const reviewsOwed: OutreachItem[] = [];
   const referralsOwed: OutreachItem[] = [];
 
@@ -125,6 +131,16 @@ export function computeBand2(
     const due = nextTouchDue(c, activities);
     const overdueBy = due ? -(daysUntil(due) ?? 0) : 0; // positive if past due
     const lastAgo = daysAgo(lastTouchAt(c, activities));
+
+    // Birthday coming up (this year's occurrence within the next 2 weeks).
+    if (c.birthday) {
+      const bIn = daysUntil(anniversary(c.birthday));
+      if (bIn != null && bIn >= 0 && bIn <= 14) {
+        birthdays.push(
+          makeItem(c, "birthday", bIn === 0 ? "Today 🎂" : `In ${bIn}d`, 100 - bIn),
+        );
+      }
+    }
 
     // Leads going cold
     if (c.type === "lead" && (c.heat === "new" || c.heat === "warm") && overdueBy >= 0) {
@@ -184,22 +200,28 @@ export function computeBand2(
   const byOverdue = (a: OutreachItem, b: OutreachItem) => b.daysOverdue - a.daysOverdue;
   coldLeads.sort(byOverdue);
   pastClientsDue.sort(byOverdue);
+  birthdays.sort(byOverdue);
   reviewsOwed.sort(byOverdue);
   referralsOwed.sort(byOverdue);
 
   // "Call these 10 today" — blended, de-duped by contact, top 10 by urgency.
+  // Birthdays lead: a same-day "happy birthday" is the easiest, warmest touch.
   const seen = new Set<string>();
   const callTheseTen: OutreachItem[] = [];
-  for (const item of [...coldLeads, ...reviewsOwed, ...referralsOwed, ...pastClientsDue].sort(
-    byOverdue,
-  )) {
+  for (const item of [
+    ...birthdays,
+    ...coldLeads,
+    ...reviewsOwed,
+    ...referralsOwed,
+    ...pastClientsDue,
+  ].sort(byOverdue)) {
     if (seen.has(item.contact.id)) continue;
     seen.add(item.contact.id);
     callTheseTen.push(item);
     if (callTheseTen.length >= 10) break;
   }
 
-  return { coldLeads, pastClientsDue, reviewsOwed, referralsOwed, callTheseTen };
+  return { coldLeads, pastClientsDue, birthdays, reviewsOwed, referralsOwed, callTheseTen };
 }
 
 function anniversary(closingISO: string): string {

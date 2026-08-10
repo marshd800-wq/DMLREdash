@@ -8,6 +8,7 @@ const TONE_BY_REASON: Record<
   cold_lead: "alert",
   past_client_due: "amber",
   home_anniversary: "accent",
+  birthday: "accent",
   review_owed: "accent",
   referral_owed: "amber",
 };

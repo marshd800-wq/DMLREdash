@@ -155,8 +155,37 @@ export function mapContact(r: RechatRaw) {
     source: r.source_type ?? r.source ?? null,
     last_touch_at: lastTouchIso,
     next_touch_due: nextTouchDue,
+    touch_freq: touchFreq, // contact's own cadence; list fallback filled at sync
+    birthday: toDate(r.birthday),
     tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
   };
+}
+
+/**
+ * Build a tag → touch_freq (days) map from Rechat Contact Lists. Diana's lists
+ * ("Warm" = 60d, "Hot" = 30d, "Past Client" = null) are saved searches whose
+ * filter value is a tag; a list with a touch_freq defines the cadence for
+ * contacts carrying that tag. Only lists that actually set a touch_freq count.
+ */
+export function buildListCadenceMap(lists: RechatRaw[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const list of lists) {
+    const freq = num(list?.touch_freq);
+    if (freq == null || freq <= 0) continue;
+    const filters = Array.isArray(list.filters) ? list.filters : [];
+    for (const f of filters) {
+      const val = f?.value;
+      const values = Array.isArray(val) ? val : [val];
+      for (const v of values) {
+        if (v == null) continue;
+        const key = String(v).toLowerCase();
+        const existing = map.get(key);
+        // Smallest cadence wins — the most urgent list a contact matches.
+        if (existing == null || freq < existing) map.set(key, freq);
+      }
+    }
+  }
+  return map;
 }
 
 // ── calendar events (the unified timeline: touches, emails, CRM tasks) ──
