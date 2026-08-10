@@ -271,6 +271,27 @@ export function mapCalendarEvent(ev: RechatRaw): CalendarMapped {
     };
   }
 
+  // A buyer agent booked a tour on one of Diana's listings → a real showing.
+  if (objectType === "showing_appointment") {
+    const startsAt = toIso(ev.timestamp ?? ev.due_date);
+    if (!startsAt || !id) return { kind: "skip" };
+    // Rechat statuses: Requested / Confirmed / Cancelled → our confirmed/cancelled.
+    const st = String(ev.status ?? "").toLowerCase();
+    const status = st.includes("cancel") ? "cancelled" : "confirmed";
+    return {
+      kind: "appointment",
+      contactRechatId: eventContactRechatId(ev),
+      dealRechatId: eventDealRechatId(ev),
+      row: {
+        rechat_id: `cal:${id}`,
+        type: "showing",
+        starts_at: startsAt,
+        source: "rechat",
+        status,
+      },
+    };
+  }
+
   return { kind: "skip" };
 }
 

@@ -472,7 +472,8 @@ export async function upsertRechatRecord(resource: string, raw: RechatRaw): Prom
     case "calendar":
     case "calendar_event":
     case "activity":
-    case "crm_task": {
+    case "crm_task":
+    case "showing_appointment": {
       // Route a single event/task through the same mapping as the bulk sync.
       // Calendar events tag their kind in object_type; raw crm_task / activity
       // objects tag it in `type`. Ignore anything that carries neither.
