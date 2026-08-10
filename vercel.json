@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/morning-brief",
       "schedule": "30 11 * * *"
+    },
+    {
+      "path": "/api/sync/rechat",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
