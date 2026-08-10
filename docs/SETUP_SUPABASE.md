@@ -70,6 +70,8 @@ npm run dev
 
 Open **http://localhost:3000**. The badge should now read **"Live"**.
 
+> **Row Level Security is enabled on every table** (the schema does this). The app reads through the `service_role` key server-side, which bypasses RLS and is never sent to the browser — so `SUPABASE_SERVICE_ROLE_KEY` is required for the app to see data, and your client PII stays locked to everything else.
+
 > Your database is empty at first, so the numbers will be zero — that's expected and correct. The OS falls back to sample data only when it can't reach Supabase at all; once connected, it shows *your* data. Rechat sync (Track A2) is what fills these tables automatically. Until then you can add a few rows by hand in the **Table Editor** to see it light up.
 
 ---
@@ -87,7 +89,7 @@ When you deploy (Track A4), add these **exact same four variables** in **Vercel 
 | Badge still says "Sample data" | The app only reads env vars at startup — stop (`Ctrl+C`) and re-run `npm run dev`. Confirm no typos in the variable names. |
 | SQL error "type already exists" | Harmless — the script is safe to re-run; it guards against duplicates. |
 | Numbers are all zero after connecting | Correct — your DB is empty. Add rows in Table Editor, or wait for Rechat sync (A2). |
-| "permission denied for table" | You ran the app with the `anon` key but Row Level Security is on with no policy. For a single-user solo app you can leave RLS off (default here). Don't enable RLS without adding policies. |
+| "permission denied for table" / all rows empty with RLS on | The app must read via the **`service_role`** key. Make sure `SUPABASE_SERVICE_ROLE_KEY` is set in `.env.local`, then restart. RLS is enabled on every table (no public policies), so the anon key intentionally sees nothing — only the server (service_role) can read. |
 
 ---
 

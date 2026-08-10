@@ -240,3 +240,20 @@ begin
        for each row execute function set_updated_at();', t);
   end loop;
 end $$;
+
+-- ── Row Level Security ─────────────────────────────────────────
+-- Enable RLS on every table with NO public policies. The app reaches the DB
+-- only server-side via the service_role key (which bypasses RLS), so this locks
+-- the tables to the anon/authenticated keys — protecting client PII. When
+-- Supabase Auth is added later (PRD §2), add per-user policies here.
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'contacts','properties','deals','listings','tasks','appointments',
+    'activities','vendors','documents','task_templates','agents'
+  ]
+  loop
+    execute format('alter table %I enable row level security;', t);
+  end loop;
+end $$;
