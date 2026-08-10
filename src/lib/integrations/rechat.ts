@@ -328,7 +328,7 @@ export async function syncFromRechat(): Promise<{
   //    whole MLS, not Diana's listings. Her listings + properties come from her
   //    DEALS (each listing-side deal embeds a listing → property). Deals use the
   //    POST replacement for the deprecated GET /deals route.
-  const [rawContacts, rawDeals] = await Promise.all([
+  const [rawContacts, rawDealsAll] = await Promise.all([
     safeFetch(errors, "contacts", () =>
       rechatFetchAll(config, { method: "GET", path: "/contacts" }, token, brandId),
     ),
@@ -336,6 +336,10 @@ export async function syncFromRechat(): Promise<{
       rechatFetchAll(config, { method: "POST", path: "/deals/filter", body: {} }, token, brandId),
     ),
   ]);
+
+  // Drop draft deals — they're incomplete shells (title "[Draft]", roles null)
+  // that would otherwise inflate pipeline/GCI. Only real deals count.
+  const rawDeals = rawDealsAll.filter((d) => d.is_draft !== true);
 
   // 2. Upsert contacts.
   const contactRows = rawContacts.map(mapContact);
@@ -439,6 +443,8 @@ export async function upsertRechatRecord(resource: string, raw: RechatRaw): Prom
       await supabase.from("contacts").upsert([mapContact(raw)], { onConflict: "rechat_id" });
       break;
     case "deal": {
+      // Skip drafts — incomplete shells that shouldn't enter the pipeline.
+      if (raw.is_draft === true) break;
       // Property from the deal's context, then the deal itself.
       await supabase.from("properties").upsert([mapDealProperty(raw)], { onConflict: "rechat_id" });
       const propMap = await buildIdMap(supabase, "properties");
