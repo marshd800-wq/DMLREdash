@@ -1,4 +1,5 @@
 import type {
+  Activity,
   Appointment,
   Contact,
   Deal,
@@ -103,6 +104,21 @@ export const sampleProperties: Property[] = [
     lat: 33.86,
     lng: -84.38,
   },
+  {
+    id: "p6",
+    rechat_id: null,
+    notion_id: null,
+    address: "126 Peachtree Battle Ave NW",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30305",
+    beds: 4,
+    baths: 4,
+    sqft: 3900,
+    list_price: 1650000,
+    lat: 33.82,
+    lng: -84.4,
+  },
 ];
 
 export const sampleContacts: Contact[] = [
@@ -159,6 +175,42 @@ export const sampleContacts: Contact[] = [
     review_asked_at: null,
     referral_asked_at: null,
     tags: ["FSBO", "Buckhead"],
+  },
+  {
+    id: "c4",
+    rechat_id: null,
+    notion_id: null,
+    first_name: "Devon",
+    last_name: "Pierce",
+    email: "devon@example.com",
+    phone: "404-555-0110",
+    type: "past_client",
+    heat: "warm",
+    source: "referral",
+    last_touch_at: iso(-11),
+    next_touch_due: null, // let cadence compute it
+    referral_source_id: "c1",
+    review_asked_at: null, // ← powers "reviews I owe" (just closed)
+    referral_asked_at: null,
+    tags: ["past-client", "A+"],
+  },
+  {
+    id: "c5",
+    rechat_id: null,
+    notion_id: null,
+    first_name: "Sana",
+    last_name: "Idris",
+    email: "sana@example.com",
+    phone: "404-555-0173",
+    type: "lead",
+    heat: "warm",
+    source: "YouTube",
+    last_touch_at: iso(-12),
+    next_touch_due: dateOnly(-3), // ← past due → going cold
+    referral_source_id: null,
+    review_asked_at: null,
+    referral_asked_at: null,
+    tags: ["luxury", "Buckhead"],
   },
 ];
 
@@ -253,6 +305,24 @@ export const sampleDeals: Deal[] = [
     closing_date: dateOnly(-120),
     is_closed: true,
   },
+  // Just closed — drives "reviews I owe" + "referral ask owed (just closed)"
+  {
+    id: "d6",
+    rechat_id: null,
+    property_id: "p6",
+    contact_id: "c4",
+    side: "buyer",
+    status: "sold",
+    price: 1650000,
+    commission_rate: 0.03,
+    gci: 49500,
+    binding_date: dateOnly(-42),
+    dd_end: dateOnly(-32),
+    financing_end: dateOnly(-17),
+    appraisal_end: dateOnly(-22),
+    closing_date: dateOnly(-12),
+    is_closed: true,
+  },
 ];
 
 export const sampleListings: Listing[] = [
@@ -302,4 +372,13 @@ export const sampleAppointments: Appointment[] = [
   { id: "a5", contact_id: "c3", deal_id: null, type: "consult", starts_at: iso(-2), source: "calendly", status: "completed" },
   { id: "a6", contact_id: "c1", deal_id: null, type: "consult", starts_at: iso(-5), source: "manual", status: "completed" },
   { id: "a7", contact_id: "c2", deal_id: null, type: "consult", starts_at: iso(-9), source: "calendly", status: "completed" },
+];
+
+export const sampleActivities: Activity[] = [
+  { id: "act1", contact_id: "c1", type: "call", occurred_at: iso(-4), channel: "phone", notes: "Reviewed listing prep timeline." },
+  { id: "act2", contact_id: "c1", type: "text", occurred_at: iso(-2), channel: "sms", notes: "Confirmed photographer Friday." },
+  { id: "act3", contact_id: "c2", type: "email", occurred_at: iso(-330), channel: "email", notes: "Sent market update." },
+  { id: "act4", contact_id: "c3", type: "call", occurred_at: iso(-9), channel: "phone", notes: "Buyer consult; FSBO question." },
+  { id: "act5", contact_id: "c4", type: "meeting", occurred_at: iso(-11), channel: "in-person", notes: "Closing celebration." },
+  { id: "act6", contact_id: "c5", type: "email", occurred_at: iso(-12), channel: "email", notes: "Sent 3 Buckhead listings." },
 ];

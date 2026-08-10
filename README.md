@@ -4,27 +4,29 @@
 
 **Luxury With a Pulse** · Diana Marsh, REALTOR® · FOREVER Agent® · Berkshire Hathaway HomeServices Georgia Properties
 
-Built with **Next.js (App Router) + TypeScript + Tailwind + Supabase**, deployable on Vercel. This repo currently implements **Phase 1 (MVP)** from the PRD and scaffolds the rest.
+Built with **Next.js (App Router) + TypeScript + Tailwind + Supabase**, deployable on Vercel. This repo implements **Phases 1 & 2** from the PRD and scaffolds the rest.
 
 ---
 
-## What's built (Phase 1 — MVP)
+## What's built
 
-The one-screen command dashboard answering **Question 1 — "How am I doing?"** (PRD §4, Band 1):
+**Phase 1 — the one-screen dashboard, Band 1 "How am I doing?"** (PRD §4):
+- **GCI vs. annual goal** radial gauge (closed YTD + pending pipeline).
+- **Appointments booked** this week/month + week-over-week trend.
+- **Listings taken** MTD/YTD · **Under contract** (count + volume) · **Closings this month**.
 
-- **GCI vs. annual goal** — radial gauge (closed YTD, with pending pipeline as the "on pace to" figure).
-- **Appointments booked** — this week / month + week-over-week trend (the #1 leading indicator).
-- **Listings taken** — MTD / YTD.
-- **Under contract** — deal count + pipeline volume.
-- **Closings this month** — count + volume.
+**Phase 2 — the deadline engine + Bands 2 & 3 + Morning Brief:**
+- **Deadline engine** (PRD §5, the heart) — under-contract deals auto-generate an anchored task checklist from side-keyed templates; moving any anchor date **cascades** every downstream due date (`due = anchor + offset`).
+- **Band 2 "Who do I reach out to?"** — leads going cold, past clients due (incl. 1-year home anniversary), **reviews owed**, **referral asks owed** (the 4 triggers), and a blended **"Call these 10 today"** with one-tap call/text + script snippets.
+- **Band 3 "What needs attention?"** — deadlines in the next 14 days, overdue tasks, stale listings (DOM > 21, no offer), new/at-risk deals.
+- **Pipeline page** (`/deals`) — per-deal **milestone tracker** (Under Contract → Sold) with health dots + the live task checklist (PRD §6).
+- **Morning Brief** (`/brief` preview + `/api/cron/morning-brief`) — one consolidated 7:30 AM digest, sent via Resend when configured (PRD §8), Vercel Cron wired (`vercel.json`).
 
-Plus:
-- Full **brand shell** — logo, Playfair/Inter/Parisienne fonts, the espresso/cream/terracotta palette (PRD §11).
-- The complete **Supabase schema** for the whole data model (PRD §3), not just Phase 1.
-- **Deadline-engine task templates** seeded (Georgia listing/buyer defaults, PRD §5) — data, not code.
+**Foundation (both phases):**
+- Full **brand shell** — logo, Playfair/Inter/Parisienne, the espresso/cream/terracotta palette (PRD §11).
+- Complete **Supabase schema** for the whole data model (PRD §3) + seeded deadline templates (PRD §5).
 - Clearly-labeled **Rechat** and **Notion** integration stubs (PRD §7).
-- **Runs on sample data with zero setup** — a live badge flips to "Live" once Supabase is configured.
-- An outline of **Bands 2 & 3** so the full one-screen structure is visible (ships in Phase 2).
+- **Runs on sample data with zero setup** — a live badge flips to "Live" once Supabase is configured. Cadence rules, reviews/referrals-owed logic, and the deadline engine are all pure functions that behave identically on sample and live data.
 
 ## Quick start
 
@@ -85,7 +87,11 @@ supabase/
 
 ## Roadmap (from the PRD)
 
-- **Phase 1 — MVP (this repo):** brand shell + Band 1 "How am I doing?" on sample/Supabase data. ✅
-- **Phase 2:** Notion (NOS) sync, activities/touch log, cold-lead + past-client cadence, reviews/referrals owed, the **task & deadline engine + cascade**, Bands 2 & 3, Morning Brief email.
-- **Phase 3:** Calendly + ShowingTime feeds, SMS, milestone tracker + client-facing "pizza tracker," one-tap call/text.
-- **Phase 4:** weekly auto-summary, price-drop suggestions, NOS next-best-action.
+- **Phase 1 — MVP:** brand shell + Band 1 "How am I doing?" on sample/Supabase data. ✅
+- **Phase 2:** activities/touch log, cold-lead + past-client cadence, reviews/referrals owed, the **task & deadline engine + cascade**, Bands 2 & 3, milestone tracker, Morning Brief. ✅
+- **Phase 3:** Rechat/Notion **write-side sync** (the stubs → real), Calendly + ShowingTime feeds, SMS (Twilio), client-facing "pizza tracker," one-tap call/text pulling scripts from the NOS.
+- **Phase 4:** weekly auto-summary, price-drop suggestions on stale listings, NOS next-best-action.
+
+## Going live
+
+See **`docs/SETUP_SUPABASE.md`** for the step-by-step (Track A1). In short: create a Supabase project, run `supabase/migrations/0001_init.sql` + `supabase/seed.sql`, drop the URL + keys into `.env.local`, restart. The badge flips **Sample data → Live**. Live tables start empty — add rows in the Supabase Table Editor, or wait for Rechat sync (Phase 3) to fill them.

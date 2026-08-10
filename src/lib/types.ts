@@ -116,6 +116,52 @@ export interface Appointment {
   status: string;
 }
 
+export type TaskAnchor =
+  | "contract"
+  | "inspection"
+  | "appraisal"
+  | "financing"
+  | "closing"
+  | "manual";
+
+export type TaskStatus = "open" | "done" | "overdue";
+export type TaskSource = "template" | "notion" | "manual";
+
+export interface Task {
+  id: string;
+  notion_id: string | null;
+  rechat_id: string | null;
+  deal_id: string | null;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  anchor: TaskAnchor;
+  offset_days: number;
+  status: TaskStatus; // 'overdue' is computed at read time
+  source: TaskSource;
+}
+
+/** A deadline-engine template row (PRD §5). Data, not code. */
+export interface TaskTemplate {
+  id: string;
+  side: DealSide;
+  title: string;
+  anchor: TaskAnchor;
+  offset_days: number;
+  sort_order: number;
+}
+
+export type ActivityType = "call" | "text" | "email" | "meeting" | "note";
+
+export interface Activity {
+  id: string;
+  contact_id: string;
+  type: ActivityType;
+  occurred_at: string;
+  channel: string | null;
+  notes: string | null;
+}
+
 /** The five Band-1 headline metrics ("How am I doing?"). */
 export interface DashboardMetrics {
   gci: {
@@ -140,4 +186,65 @@ export interface DashboardMetrics {
     count: number;
     volume: number;
   };
+}
+
+// ── Band 2 — "Who do I reach out to?" view models ──
+export type OutreachReason =
+  | "cold_lead"
+  | "past_client_due"
+  | "home_anniversary"
+  | "review_owed"
+  | "referral_owed";
+
+export interface OutreachItem {
+  contact: Contact;
+  reason: OutreachReason;
+  reasonLabel: string;
+  detail: string; // e.g. "Last touch 34 days ago"
+  daysOverdue: number; // for ranking; 0 if not date-driven
+  script: string; // one-tap script snippet
+}
+
+export interface Band2Data {
+  coldLeads: OutreachItem[];
+  pastClientsDue: OutreachItem[];
+  reviewsOwed: OutreachItem[];
+  referralsOwed: OutreachItem[];
+  callTheseTen: OutreachItem[];
+}
+
+// ── Band 3 — "What needs attention?" view models ──
+export interface DeadlineItem {
+  deal_id: string;
+  label: string; // "Due diligence ends", "Closing"…
+  date: string;
+  daysAway: number;
+  address: string;
+  side: DealSide;
+}
+
+export interface TaskWithContext extends Task {
+  address: string | null;
+}
+
+export interface StaleListingItem {
+  listing: Listing;
+  address: string;
+  daysOnMarket: number;
+  listPrice: number | null;
+  lastPriceChange: string | null;
+}
+
+export interface AtRiskDealItem {
+  deal_id: string;
+  address: string;
+  status: DealStatus;
+  reason: string; // "New under contract" | "Missed <milestone>"
+}
+
+export interface Band3Data {
+  deadlinesThisWeek: DeadlineItem[];
+  overdueTasks: TaskWithContext[];
+  staleListings: StaleListingItem[];
+  atRiskDeals: AtRiskDealItem[];
 }

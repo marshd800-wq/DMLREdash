@@ -1,34 +1,57 @@
-import type { Appointment, Deal, Listing, Property, Contact } from "@/lib/types";
+import type {
+  Activity,
+  Appointment,
+  Band2Data,
+  Band3Data,
+  Contact,
+  Deal,
+  Listing,
+  Property,
+  Task,
+  TaskTemplate,
+} from "@/lib/types";
 import {
+  sampleActivities,
   sampleAppointments,
   sampleContacts,
   sampleDeals,
   sampleListings,
   sampleProperties,
 } from "@/lib/data/sample";
+import { TASK_TEMPLATES } from "@/lib/data/templates";
 import {
   computeDashboardMetrics,
   withComputedFields,
 } from "@/lib/data/metrics";
+import {
+  generateTasksForDeal,
+  withTaskStatus,
+} from "@/lib/data/deadline";
+import { computeBand2 } from "@/lib/data/cadence";
+import { computeBand3 } from "@/lib/data/attention";
 import { getSupabaseServer } from "@/lib/supabase/server";
 
 /**
  * Single data-access seam for the OS.
  *
- * Phase 1 contract: read from Supabase when it is configured, otherwise return
- * the editable sample set. Either way callers get the same shapes, and computed
- * fields (DOM, stale_flag, GCI, dashboard rollups) are applied here so pages
- * stay dumb. When Rechat sync lands, it writes into these same Supabase tables
- * and nothing downstream changes.
+ * Reads from Supabase when configured, otherwise the editable sample set. Either
+ * way callers get identical shapes with all computed fields applied here:
+ * DOM/stale-flag, GCI, dashboard rollups, the deadline-engine task set + status,
+ * and the Band 2/3 view models. Pages stay dumb.
  */
 
 export interface DashboardData {
   metrics: ReturnType<typeof computeDashboardMetrics>;
+  band2: Band2Data;
+  band3: Band3Data;
   deals: Deal[];
   listings: Listing[];
   appointments: Appointment[];
   properties: Property[];
   contacts: Contact[];
+  tasks: Task[];
+  activities: Activity[];
+  templates: TaskTemplate[];
   source: "supabase" | "sample";
   annualGoal: number;
 }
@@ -39,44 +62,56 @@ function getAnnualGoal(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 750000;
 }
 
-async function loadRaw(): Promise<{
+interface RawData {
   deals: Deal[];
   listings: Listing[];
   appointments: Appointment[];
   properties: Property[];
   contacts: Contact[];
+  activities: Activity[];
+  tasks: Task[];
+  templates: TaskTemplate[];
   source: "supabase" | "sample";
-}> {
+}
+
+async function loadRaw(): Promise<RawData> {
   const supabase = getSupabaseServer();
 
   if (supabase) {
     try {
-      const [deals, listings, appointments, properties, contacts] =
+      const [deals, listings, appointments, properties, contacts, activities, tasks, templates] =
         await Promise.all([
           supabase.from("deals").select("*"),
           supabase.from("listings").select("*"),
           supabase.from("appointments").select("*"),
           supabase.from("properties").select("*"),
           supabase.from("contacts").select("*"),
+          supabase.from("activities").select("*"),
+          supabase.from("tasks").select("*"),
+          supabase.from("task_templates").select("*"),
         ]);
 
-      // Any error (e.g. tables not migrated yet) → graceful fallback.
       const anyError =
         deals.error || listings.error || appointments.error ||
-        properties.error || contacts.error;
+        properties.error || contacts.error || activities.error ||
+        tasks.error || templates.error;
 
       if (!anyError) {
+        const tmpl = (templates.data ?? []) as TaskTemplate[];
         return {
           deals: (deals.data ?? []) as Deal[],
           listings: (listings.data ?? []) as Listing[],
           appointments: (appointments.data ?? []) as Appointment[],
           properties: (properties.data ?? []) as Property[],
           contacts: (contacts.data ?? []) as Contact[],
+          activities: (activities.data ?? []) as Activity[],
+          tasks: (tasks.data ?? []) as Task[],
+          templates: tmpl.length ? tmpl : TASK_TEMPLATES,
           source: "supabase",
         };
       }
     } catch {
-      // network / config hiccup — fall through to sample data
+      // fall through to sample data
     }
   }
 
@@ -86,16 +121,39 @@ async function loadRaw(): Promise<{
     appointments: sampleAppointments,
     properties: sampleProperties,
     contacts: sampleContacts,
+    activities: sampleActivities,
+    tasks: [],
+    templates: TASK_TEMPLATES,
     source: "sample",
   };
+}
+
+/**
+ * Ensure every open deal has a task set. Persisted tasks win; open deals with
+ * none get tasks generated from the templates on the fly (so Band 3 and the
+ * milestone tracker work before the write-side of the deadline engine runs).
+ */
+function ensureTasks(
+  deals: Deal[],
+  persisted: Task[],
+  templates: TaskTemplate[],
+): Task[] {
+  const dealsWithTasks = new Set(persisted.map((t) => t.deal_id));
+  const generated: Task[] = [];
+  for (const deal of deals) {
+    if (deal.is_closed) continue;
+    if (dealsWithTasks.has(deal.id)) continue;
+    generated.push(...generateTasksForDeal(deal, templates));
+  }
+  return withTaskStatus([...persisted, ...generated]);
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
   const raw = await loadRaw();
   const annualGoal = getAnnualGoal();
 
-  // Apply computed fields (DOM, stale_flag).
   const listings = withComputedFields(raw.listings);
+  const tasks = ensureTasks(raw.deals, raw.tasks, raw.templates);
 
   const metrics = computeDashboardMetrics(
     raw.deals,
@@ -103,20 +161,26 @@ export async function getDashboardData(): Promise<DashboardData> {
     raw.appointments,
     annualGoal,
   );
+  const band2 = computeBand2(raw.contacts, raw.deals, raw.activities);
+  const band3 = computeBand3(raw.deals, listings, tasks, raw.properties);
 
   return {
     metrics,
+    band2,
+    band3,
     deals: raw.deals,
     listings,
     appointments: raw.appointments,
     properties: raw.properties,
     contacts: raw.contacts,
+    tasks,
+    activities: raw.activities,
+    templates: raw.templates,
     source: raw.source,
     annualGoal,
   };
 }
 
-/** Look up a property record by id (for enriching deal/listing cards). */
 export function propertyById(
   properties: Property[],
   id: string | null,

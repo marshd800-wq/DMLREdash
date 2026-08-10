@@ -1,9 +1,22 @@
 import Image from "next/image";
+import Link from "next/link";
 
 const LOGO_URL =
   "https://content.mediastg.net/dyna_images/ImageLibrary/2/E/B/0/2EB0913A-5EE1-4770-9E4B-3FA27B55558D.png";
 
-export function Header({ source }: { source: "supabase" | "sample" }) {
+const NAV = [
+  { href: "/", label: "Dashboard" },
+  { href: "/deals", label: "Pipeline" },
+  { href: "/brief", label: "Morning Brief" },
+];
+
+export function Header({
+  source,
+  active = "/",
+}: {
+  source: "supabase" | "sample";
+  active?: string;
+}) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -43,6 +56,29 @@ export function Header({ source }: { source: "supabase" | "sample" }) {
           <DataSourceBadge source={source} />
         </div>
       </div>
+
+      <nav className="mx-auto max-w-7xl px-6">
+        <ul className="flex gap-1 pb-2">
+          {NAV.map((item) => {
+            const isActive = item.href === active;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={
+                    "inline-block rounded-md px-3 py-1.5 text-sm font-medium transition " +
+                    (isActive
+                      ? "bg-terracotta/10 text-terracotta"
+                      : "text-bronze hover:bg-cream hover:text-espresso")
+                  }
+                >
+                  {item.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
     </header>
   );
 }
