@@ -171,11 +171,20 @@ export function mapContact(r: RechatRaw) {
 // wedding anniversary is stamped in the year it happened — so it must never be
 // read as an event time), and email_campaign/holiday aren't actionable here.
 
-/** Single associated contact for an event (`contact` id, else a lone person). */
+/** Single associated contact for an event/task. Calendar events carry a scalar
+ *  `contact`; raw crm_task objects carry a flat `contacts[]` id array. */
 function eventContactRechatId(ev: RechatRaw): string | null {
   if (ev.contact) return String(ev.contact);
+  if (Array.isArray(ev.contacts) && ev.contacts.length) return String(ev.contacts[0]);
   const people = Array.isArray(ev.people) ? ev.people : [];
   if (people.length === 1 && people[0]?.id) return String(people[0].id);
+  return null;
+}
+
+/** Single associated deal (scalar `deal` on events; `deals[]` on raw tasks). */
+function eventDealRechatId(ev: RechatRaw): string | null {
+  if (ev.deal) return String(ev.deal);
+  if (Array.isArray(ev.deals) && ev.deals.length) return String(ev.deals[0]);
   return null;
 }
 
@@ -222,12 +231,14 @@ export type CalendarMapped =
   | { kind: "skip" };
 
 export function mapCalendarEvent(ev: RechatRaw): CalendarMapped {
-  const objectType = String(ev.object_type ?? "");
-  const eventType = String(ev.event_type ?? "");
+  // Calendar events tag their source in `object_type`; a raw crm_task / activity
+  // object (e.g. from a webhook) tags it in `type` instead. Normalize both.
+  const objectType = String(ev.object_type ?? (ev.type === "crm_task" ? "crm_task" : ev.type === "activity" ? "activity" : ""));
+  const eventType = String(ev.event_type ?? ev.task_type ?? "");
   const id = String(ev.id ?? "");
 
   if (objectType === "activity" || objectType === "email_thread") {
-    const occurred = toIso(ev.timestamp);
+    const occurred = toIso(ev.timestamp ?? ev.occurred_at ?? ev.created_at);
     if (!occurred || !id) return { kind: "skip" };
     return {
       kind: "activity",
@@ -243,12 +254,13 @@ export function mapCalendarEvent(ev: RechatRaw): CalendarMapped {
   }
 
   if (objectType === "crm_task") {
-    const startsAt = toIso(ev.timestamp);
+    // Calendar events time the task in `timestamp`; a raw task uses `due_date`.
+    const startsAt = toIso(ev.timestamp ?? ev.due_date);
     if (!startsAt || !id) return { kind: "skip" };
     return {
       kind: "appointment",
       contactRechatId: eventContactRechatId(ev),
-      dealRechatId: ev.deal ? String(ev.deal) : null,
+      dealRechatId: eventDealRechatId(ev),
       row: {
         rechat_id: `cal:${id}`,
         type: mapAppointmentType(eventType),

@@ -467,9 +467,10 @@ export async function upsertRechatRecord(resource: string, raw: RechatRaw): Prom
     case "calendar_event":
     case "activity":
     case "crm_task": {
-      // Route a single calendar_event through the same mapping as the bulk sync.
-      // Guard on object_type so a non-calendar payload is safely ignored.
-      if (!raw.object_type) break;
+      // Route a single event/task through the same mapping as the bulk sync.
+      // Calendar events tag their kind in object_type; raw crm_task / activity
+      // objects tag it in `type`. Ignore anything that carries neither.
+      if (!raw.object_type && raw.type !== "crm_task" && raw.type !== "activity") break;
       const mapped = mapCalendarEvent(raw);
       if (mapped.kind === "activity" && mapped.contactRechatId) {
         const contactMap = await buildIdMap(supabase, "contacts");
