@@ -187,10 +187,18 @@ async function getAccessToken(config: RechatConfig): Promise<string> {
   return tok.access_token;
 }
 
-// ── paginated fetch ───────────────────────────────────────────
-async function rechatGetAll(
+// ── paginated fetch (GET or POST-filter) ─────────────────────
+// Note: as of 2026-01-01 Rechat deprecated `GET /deals` (→ POST /deals/filter)
+// and `GET /listings/search` (→ POST /valerts). This fetcher supports both verbs.
+interface FetchSpec {
+  method: "GET" | "POST";
+  path: string;
+  body?: Record<string, unknown>;
+}
+
+async function rechatFetchAll(
   config: RechatConfig,
-  path: string,
+  spec: FetchSpec,
   token: string,
   brandId: string | null,
 ): Promise<RechatRaw[]> {
@@ -199,7 +207,8 @@ async function rechatGetAll(
   const limit = 50;
 
   for (let guard = 0; guard < 200; guard++) {
-    const url = `${config.apiBase}${path}${path.includes("?") ? "&" : "?"}start=${start}&limit=${limit}`;
+    const sep = spec.path.includes("?") ? "&" : "?";
+    const url = `${config.apiBase}${spec.path}${sep}start=${start}&limit=${limit}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
@@ -207,9 +216,22 @@ async function rechatGetAll(
     // Requests are brand-scoped; pass the brand the grant was issued under.
     if (brandId) headers["X-RECHAT-BRAND"] = brandId;
 
-    const res = await fetch(url, { headers });
+    let res: Response;
+    if (spec.method === "POST") {
+      headers["Content-Type"] = "application/json";
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ start, limit, ...(spec.body ?? {}) }),
+      });
+    } else {
+      res = await fetch(url, { headers });
+    }
+
     if (!res.ok) {
-      throw new Error(`Rechat GET ${path} failed (${res.status}): ${await res.text()}`);
+      throw new Error(
+        `Rechat ${spec.method} ${spec.path} failed (${res.status}): ${await res.text()}`,
+      );
     }
     const json = await res.json();
     const page: RechatRaw[] = Array.isArray(json) ? json : (json.data ?? []);
@@ -218,6 +240,21 @@ async function rechatGetAll(
     start += limit;
   }
   return out;
+}
+
+/** Fetch that never throws — returns [] and records the error, so one failing
+ *  resource (e.g. a filter body Rechat rejects) doesn't abort the whole sync. */
+async function safeFetch(
+  errors: string[],
+  label: string,
+  fn: () => Promise<RechatRaw[]>,
+): Promise<RechatRaw[]> {
+  try {
+    return await fn();
+  } catch (err) {
+    errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
 }
 
 // ── id maps (resolve Rechat FKs → local uuids) ────────────────
@@ -241,6 +278,7 @@ export async function syncFromRechat(): Promise<{
   properties: number;
   deals: number;
   listings: number;
+  errors: string[];
 }> {
   const config = getRechatConfig();
   if (!config) {
@@ -253,12 +291,20 @@ export async function syncFromRechat(): Promise<{
 
   const token = await getAccessToken(config);
   const brandId = (await loadTokens())?.brand_id ?? null;
+  const errors: string[] = [];
 
-  // 1. Fetch raw objects from Rechat.
+  // 1. Fetch raw objects from Rechat (each isolated — one failure ≠ total fail).
+  //    Deals + listings use the POST replacements for the deprecated GET routes.
   const [rawContacts, rawListings, rawDeals] = await Promise.all([
-    rechatGetAll(config, "/contacts", token, brandId),
-    rechatGetAll(config, "/listings", token, brandId),
-    rechatGetAll(config, "/deals", token, brandId),
+    safeFetch(errors, "contacts", () =>
+      rechatFetchAll(config, { method: "GET", path: "/contacts" }, token, brandId),
+    ),
+    safeFetch(errors, "listings", () =>
+      rechatFetchAll(config, { method: "POST", path: "/valerts", body: {} }, token, brandId),
+    ),
+    safeFetch(errors, "deals", () =>
+      rechatFetchAll(config, { method: "POST", path: "/deals/filter", body: {} }, token, brandId),
+    ),
   ]);
 
   // 2. Upsert contacts + properties (properties come off listings/deals).
@@ -301,6 +347,7 @@ export async function syncFromRechat(): Promise<{
     properties: propertyRows.length,
     deals: dealRows.length,
     listings: listingRows.length,
+    errors,
   };
 }
 
