@@ -10,8 +10,11 @@
  * CONFIGURABLE context keys, so we read them with fallback key names.
  *
  * Everything else (auth, fetch, dedupe-upsert, webhooks, cron) is payload-
- * agnostic. Contact field names remain best-effort until the /contacts payload
- * is confirmed; deal↔contact is linked by email.
+ * agnostic. The Contact shape is also confirmed: a flat object with
+ * first_name/last_name, email + emails[], phone_number + phone_numbers[],
+ * tags[], source_type, and unix last_touch/next_touch/touch_freq. Tags drive
+ * both type (Buyer/Seller/Past Client/Agent…) and heat (Hot/Warm/New).
+ * deal↔contact is linked by email.
  */
 
 // Rechat payloads are dynamic JSON; `any` is intentional in this mapping layer.
@@ -33,6 +36,17 @@ function toDate(v: unknown): string | null {
   }
   const d = new Date(v as string);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/** Rechat timestamps are unix seconds; normalize to a full ISO datetime. */
+function toIso(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "number") {
+    const ms = v < 1e12 ? v * 1000 : v; // seconds vs ms
+    return new Date(ms).toISOString();
+  }
+  const d = new Date(v as string);
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -65,9 +79,12 @@ const FINANCING_KEYS = ["financing_contingency_date", "third_party_financing_dat
 const APPRAISAL_KEYS = ["appraisal_contingency_date", "appraisal_date", "appraisal_object_date"];
 const CLOSING_KEYS = ["closing_date", "close_date", "closing"];
 
-// ── contacts (best-effort until /contacts payload is confirmed) ──
+// ── contacts (confirmed against the /contacts payload) ──
+// Rechat contacts are flat. Both a scalar (email/phone_number) and a plural
+// array (emails[]/phone_numbers[]) may be present; the array entries are plain
+// strings in the confirmed shape, but we tolerate {email}/{value} objects too.
 function firstEmail(r: RechatRaw): string | null {
-  if (typeof r.email === "string") return r.email;
+  if (typeof r.email === "string" && r.email) return r.email;
   if (Array.isArray(r.emails) && r.emails.length) {
     const e = r.emails[0];
     return typeof e === "string" ? e : (e?.email ?? e?.value ?? null);
@@ -75,33 +92,69 @@ function firstEmail(r: RechatRaw): string | null {
   return null;
 }
 function firstPhone(r: RechatRaw): string | null {
-  if (typeof r.phone_number === "string") return r.phone_number;
-  if (typeof r.phone === "string") return r.phone;
+  if (typeof r.phone_number === "string" && r.phone_number) return r.phone_number;
+  if (typeof r.phone === "string" && r.phone) return r.phone;
   if (Array.isArray(r.phone_numbers) && r.phone_numbers.length) {
     const p = r.phone_numbers[0];
     return typeof p === "string" ? p : (p?.phone_number ?? p?.value ?? null);
   }
   return null;
 }
+
+/** Lowercased tag set for a contact (Rechat tags are plain strings). */
+function tagSet(r: RechatRaw): Set<string> {
+  const tags = Array.isArray(r.tags) ? r.tags.map((t: unknown) => String(t).toLowerCase()) : [];
+  return new Set(tags);
+}
+
+/**
+ * Contact type from Rechat tags. Tags are Diana's segmentation mechanism, so
+ * they win; source_type is a weak fallback. Order matters — a past client who
+ * is also tagged Agent should read as an agent relationship last, so we check
+ * the "relationship" tags (agent/vendor) before client stages.
+ */
 function mapContactType(r: RechatRaw): string {
-  const t = String(r.contact_type ?? r.type ?? "").toLowerCase();
-  if (t.includes("past")) return "past_client";
-  if (t.includes("active") || t.includes("client")) return "active_client";
-  if (t.includes("sphere")) return "sphere";
-  if (t.includes("agent")) return "agent";
-  if (t.includes("vendor")) return "vendor";
+  const tags = tagSet(r);
+  const has = (...names: string[]) => names.some((n) => tags.has(n));
+  if (has("agent", "realtor", "broker")) return "agent";
+  if (has("vendor", "lender", "inspector", "title", "attorney", "contractor")) return "vendor";
+  if (has("past client", "past-client", "client")) return "past_client";
+  if (has("sphere", "sphere of influence", "friend", "family")) return "sphere";
+  if (has("buyer", "seller", "active client", "under contract")) return "active_client";
+  if (has("lead", "new", "prospect")) return "lead";
   return "lead";
 }
+
+/** Contact heat from Rechat tags (Hot/Warm/New/Cold/Nurture). */
+function mapContactHeat(r: RechatRaw): string {
+  const tags = tagSet(r);
+  // No 'hot' in our heat enum; Hot collapses to the hottest we track (warm).
+  if (tags.has("hot") || tags.has("warm")) return "warm";
+  if (tags.has("cold")) return "cold";
+  if (tags.has("nurture") || tags.has("drip")) return "nurture";
+  return "new";
+}
+
 export function mapContact(r: RechatRaw) {
-  const attrs = r.summary ?? r;
+  // next_touch_due prefers Rechat's own next_touch; else last_touch + touch_freq.
+  const lastTouchIso = toIso(r.last_touch);
+  const touchFreq = num(r.touch_freq);
+  let nextTouchDue = toDate(r.next_touch);
+  if (!nextTouchDue && lastTouchIso && touchFreq) {
+    nextTouchDue = toDate(new Date(lastTouchIso).getTime() + touchFreq * 24 * 60 * 60 * 1000);
+  }
+
   return {
     rechat_id: String(r.id),
-    first_name: attrs.first_name ?? attrs.given_name ?? "",
-    last_name: attrs.last_name ?? attrs.family_name ?? "",
-    email: firstEmail(attrs) ?? firstEmail(r),
-    phone: firstPhone(attrs) ?? firstPhone(r),
+    first_name: r.first_name ?? r.given_name ?? "",
+    last_name: r.last_name ?? r.family_name ?? "",
+    email: firstEmail(r),
+    phone: firstPhone(r),
     type: mapContactType(r),
-    source: r.source_type ?? r.source ?? attrs.source ?? null,
+    heat: mapContactHeat(r),
+    source: r.source_type ?? r.source ?? null,
+    last_touch_at: lastTouchIso,
+    next_touch_due: nextTouchDue,
     tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
   };
 }
