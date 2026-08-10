@@ -1,0 +1,305 @@
+import type {
+  Appointment,
+  Contact,
+  Deal,
+  Listing,
+  Property,
+} from "@/lib/types";
+
+/**
+ * Editable sample data for Diana's OS.
+ *
+ * The dashboard renders from this set whenever Supabase is not configured,
+ * so the OS is fully explorable on `npm run dev` with zero setup. Dates are
+ * generated *relative to today* (see helpers below) so the dashboard always
+ * looks live rather than drifting stale.
+ *
+ * When Rechat/Supabase is wired up, `src/lib/data/index.ts` prefers the live
+ * source and this file becomes the offline / demo fallback only.
+ */
+
+// ── relative-date helpers (keep the demo perpetually "current") ──
+const DAY = 24 * 60 * 60 * 1000;
+function iso(offsetDays: number): string {
+  return new Date(Date.now() + offsetDays * DAY).toISOString();
+}
+function dateOnly(offsetDays: number): string {
+  return iso(offsetDays).slice(0, 10);
+}
+
+export const sampleProperties: Property[] = [
+  {
+    id: "p1",
+    rechat_id: null,
+    notion_id: null,
+    address: "1420 Tuxedo Park Rd NW",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30342",
+    beds: 5,
+    baths: 6,
+    sqft: 6400,
+    list_price: 2850000,
+    lat: 33.86,
+    lng: -84.38,
+  },
+  {
+    id: "p2",
+    rechat_id: null,
+    notion_id: null,
+    address: "88 W Paces Ferry Rd NW",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30305",
+    beds: 4,
+    baths: 5,
+    sqft: 4800,
+    list_price: 1975000,
+    lat: 33.84,
+    lng: -84.39,
+  },
+  {
+    id: "p3",
+    rechat_id: null,
+    notion_id: null,
+    address: "3300 Habersham Rd NW",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30305",
+    beds: 6,
+    baths: 7,
+    sqft: 7200,
+    list_price: 3450000,
+    lat: 33.85,
+    lng: -84.4,
+  },
+  {
+    id: "p4",
+    rechat_id: null,
+    notion_id: null,
+    address: "742 Argonne Ave NE",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30308",
+    beds: 3,
+    baths: 3,
+    sqft: 2600,
+    list_price: 1150000,
+    lat: 33.77,
+    lng: -84.38,
+  },
+  {
+    id: "p5",
+    rechat_id: null,
+    notion_id: null,
+    address: "215 Blackland Rd NW",
+    city: "Atlanta",
+    state: "GA",
+    zip: "30342",
+    beds: 5,
+    baths: 6,
+    sqft: 5900,
+    list_price: 2250000,
+    lat: 33.86,
+    lng: -84.38,
+  },
+];
+
+export const sampleContacts: Contact[] = [
+  {
+    id: "c1",
+    rechat_id: null,
+    notion_id: null,
+    first_name: "Whitney",
+    last_name: "Calloway",
+    email: "whitney@example.com",
+    phone: "404-555-0182",
+    type: "active_client",
+    heat: "warm",
+    source: "referral",
+    last_touch_at: iso(-4),
+    next_touch_due: dateOnly(1),
+    referral_source_id: null,
+    review_asked_at: null,
+    referral_asked_at: null,
+    tags: ["Buckhead", "luxury", "A+"],
+  },
+  {
+    id: "c2",
+    rechat_id: null,
+    notion_id: null,
+    first_name: "Marcus",
+    last_name: "Bell",
+    email: "marcus@example.com",
+    phone: "404-555-0147",
+    type: "past_client",
+    heat: "nurture",
+    source: "sphere",
+    last_touch_at: iso(-330),
+    next_touch_due: dateOnly(-2),
+    referral_source_id: null,
+    review_asked_at: dateOnly(-320),
+    referral_asked_at: null,
+    tags: ["past-client", "anniversary"],
+  },
+  {
+    id: "c3",
+    rechat_id: null,
+    notion_id: null,
+    first_name: "Priya",
+    last_name: "Nair",
+    email: "priya@example.com",
+    phone: "404-555-0199",
+    type: "lead",
+    heat: "new",
+    source: "YouTube",
+    last_touch_at: iso(-9),
+    next_touch_due: dateOnly(-1),
+    referral_source_id: null,
+    review_asked_at: null,
+    referral_asked_at: null,
+    tags: ["FSBO", "Buckhead"],
+  },
+];
+
+export const sampleDeals: Deal[] = [
+  // Under contract — listing side, deadlines coming up
+  {
+    id: "d1",
+    rechat_id: null,
+    property_id: "p2",
+    contact_id: "c1",
+    side: "listing",
+    status: "inspection",
+    price: 1975000,
+    commission_rate: 0.03,
+    gci: 59250,
+    binding_date: dateOnly(-6),
+    dd_end: dateOnly(4),
+    financing_end: dateOnly(18),
+    appraisal_end: dateOnly(14),
+    closing_date: dateOnly(24),
+    is_closed: false,
+  },
+  // Under contract — buyer side, closing this month
+  {
+    id: "d2",
+    rechat_id: null,
+    property_id: "p4",
+    contact_id: "c3",
+    side: "buyer",
+    status: "clear_to_close",
+    price: 1150000,
+    commission_rate: 0.03,
+    gci: 34500,
+    binding_date: dateOnly(-30),
+    dd_end: dateOnly(-20),
+    financing_end: dateOnly(-3),
+    appraisal_end: dateOnly(-8),
+    closing_date: dateOnly(9),
+    is_closed: false,
+  },
+  // Under contract — listing side, closing this month
+  {
+    id: "d3",
+    rechat_id: null,
+    property_id: "p5",
+    contact_id: "c1",
+    side: "listing",
+    status: "financing",
+    price: 2250000,
+    commission_rate: 0.03,
+    gci: 67500,
+    binding_date: dateOnly(-18),
+    dd_end: dateOnly(-8),
+    financing_end: dateOnly(6),
+    appraisal_end: dateOnly(2),
+    closing_date: dateOnly(12),
+    is_closed: false,
+  },
+  // Closed this year — counts toward closed GCI
+  {
+    id: "d4",
+    rechat_id: null,
+    property_id: "p1",
+    contact_id: "c2",
+    side: "listing",
+    status: "sold",
+    price: 2850000,
+    commission_rate: 0.03,
+    gci: 85500,
+    binding_date: dateOnly(-95),
+    dd_end: dateOnly(-85),
+    financing_end: dateOnly(-70),
+    appraisal_end: dateOnly(-75),
+    closing_date: dateOnly(-60),
+    is_closed: true,
+  },
+  // Closed earlier this year
+  {
+    id: "d5",
+    rechat_id: null,
+    property_id: "p3",
+    contact_id: "c2",
+    side: "buyer",
+    status: "sold",
+    price: 3450000,
+    commission_rate: 0.025,
+    gci: 86250,
+    binding_date: dateOnly(-160),
+    dd_end: dateOnly(-150),
+    financing_end: dateOnly(-135),
+    appraisal_end: dateOnly(-140),
+    closing_date: dateOnly(-120),
+    is_closed: true,
+  },
+];
+
+export const sampleListings: Listing[] = [
+  {
+    id: "l1",
+    rechat_id: null,
+    property_id: "p2",
+    list_date: dateOnly(-40),
+    days_on_market: 0, // computed at read time
+    status: "pending",
+    last_price_change: null,
+    showings_count: 14,
+    feedback_summary: "Strong showing traffic; under contract.",
+    stale_flag: false,
+  },
+  {
+    id: "l2",
+    rechat_id: null,
+    property_id: "p5",
+    list_date: dateOnly(-9),
+    days_on_market: 0,
+    status: "active",
+    last_price_change: null,
+    showings_count: 6,
+    feedback_summary: "Positive feedback on the kitchen renovation.",
+    stale_flag: false,
+  },
+  {
+    id: "l3",
+    rechat_id: null,
+    property_id: "p3",
+    list_date: dateOnly(-34),
+    days_on_market: 0,
+    status: "active",
+    last_price_change: dateOnly(-12),
+    showings_count: 4,
+    feedback_summary: "Price sensitivity noted; consider a reduction.",
+    stale_flag: false, // computed at read time (DOM > 21, no offer)
+  },
+];
+
+export const sampleAppointments: Appointment[] = [
+  { id: "a1", contact_id: "c1", deal_id: "d1", type: "listing", starts_at: iso(1), source: "calendly", status: "confirmed" },
+  { id: "a2", contact_id: "c3", deal_id: null, type: "consult", starts_at: iso(2), source: "calendly", status: "confirmed" },
+  { id: "a3", contact_id: "c1", deal_id: "d1", type: "showing", starts_at: iso(3), source: "rechat", status: "confirmed" },
+  { id: "a4", contact_id: "c2", deal_id: "d2", type: "closing", starts_at: iso(9), source: "rechat", status: "confirmed" },
+  { id: "a5", contact_id: "c3", deal_id: null, type: "consult", starts_at: iso(-2), source: "calendly", status: "completed" },
+  { id: "a6", contact_id: "c1", deal_id: null, type: "consult", starts_at: iso(-5), source: "manual", status: "completed" },
+  { id: "a7", contact_id: "c2", deal_id: null, type: "consult", starts_at: iso(-9), source: "calendly", status: "completed" },
+];

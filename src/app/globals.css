@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-cream text-espresso font-sans antialiased;
+  }
+
+  /* Tabular numerals for metrics (PRD §11). */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+@layer components {
+  .brand-eyebrow {
+    @apply text-xs font-medium uppercase tracking-[0.18em] text-bronze;
+  }
+}
